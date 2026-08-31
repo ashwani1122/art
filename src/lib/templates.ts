@@ -1,4 +1,5 @@
 import { detailedTemplates } from "./detailed-templates";
+import { rangoliTemplates } from "./rangoli-templates";
 
 export type TemplateCategory =
   | "Nature"
@@ -11,7 +12,8 @@ export type TemplateCategory =
   | "Architecture"
   | "Interiors"
   | "Still Life"
-  | "Classics";
+  | "Classics"
+  | "Rangoli";
 
 export type DrawingTemplate = {
   id: string;
@@ -559,7 +561,7 @@ const originalTemplates: DrawingTemplate[] = [
   },
 ];
 
-export const drawingTemplates: DrawingTemplate[] = [...originalTemplates, ...detailedTemplates];
+export const drawingTemplates: DrawingTemplate[] = [...originalTemplates, ...detailedTemplates, ...rangoliTemplates];
 
 export const blankTemplate: DrawingTemplate = {
   id: "blank-canvas",
@@ -582,4 +584,5 @@ export const templateCategories = [
   "Still Life",
   "Patterns",
   "Playful",
+  "Rangoli",
 ] as const;
