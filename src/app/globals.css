@@ -782,6 +782,110 @@ button {
   height: 100%;
 }
 
+.selection-outline {
+  position: absolute;
+  z-index: 4;
+  pointer-events: none;
+  border: 2px dashed var(--coral);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.85);
+}
+
+.canvas-stack.black-paper {
+  background: #161a1d;
+  box-shadow: var(--shadow), 0 0 0 1px rgba(255, 255, 255, 0.14);
+}
+
+.canvas-stack.black-paper .guide-canvas {
+  filter: invert(1);
+}
+
+.zoom-control button.is-active {
+  color: #fff;
+  background: var(--forest);
+}
+
+.world-atlas {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.atlas-search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 34px;
+  margin: 10px 0;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--muted);
+}
+
+.atlas-search input {
+  min-width: 0;
+  width: 100%;
+  border: 0;
+  outline: 0;
+  font-size: 10px;
+  background: transparent;
+}
+
+.atlas-tabs {
+  display: flex;
+  gap: 5px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.atlas-tabs::-webkit-scrollbar { display: none; }
+
+.atlas-tabs button {
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 999px;
+  padding: 5px 8px;
+  background: #eee9df;
+  color: var(--muted);
+  font-size: 8px;
+  cursor: pointer;
+}
+
+.atlas-tabs button.is-active {
+  color: #fff;
+  background: var(--forest);
+}
+
+.atlas-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+  max-height: 520px;
+  margin-top: 10px;
+  overflow-y: auto;
+}
+
+.atlas-card {
+  min-width: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+  text-align: left;
+  cursor: pointer;
+}
+
+.atlas-card:hover { border-color: var(--coral); }
+.atlas-thumb { display: block; aspect-ratio: 1; background: #e6dfd3; }
+.atlas-thumb img { width: 100%; height: 100%; display: block; object-fit: cover; }
+.atlas-card > span:last-child { display: block; padding: 5px 6px 6px; }
+.atlas-card strong { display: block; overflow: hidden; font-size: 8px; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
+.atlas-card small { display: block; margin-top: 2px; overflow: hidden; color: var(--muted); font-size: 7px; text-overflow: ellipsis; white-space: nowrap; }
+.atlas-loading, .atlas-empty, .atlas-credit { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 9px; }
+.atlas-credit { margin: 10px 0 0; font-size: 7px; line-height: 1.4; }
+
 .paint-canvas {
   z-index: 1;
   cursor: crosshair;

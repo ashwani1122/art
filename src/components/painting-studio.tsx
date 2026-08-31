@@ -17,6 +17,7 @@ import {
   Minus,
   PaintBucket,
   Palette,
+  MousePointer2,
   PanelLeft,
   PanelLeftClose,
   PanelRight,
@@ -41,6 +42,7 @@ import {
 import { Show, SignInButton, UserButton, useAuth } from "@clerk/nextjs";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MasterpieceGallery } from "@/components/masterpiece-gallery";
+import { WorldReferenceAtlas } from "@/components/world-reference-atlas";
 import { WallPreview } from "@/components/wall-preview";
 import {
   canvasToPng,
@@ -67,6 +69,7 @@ type ToolId =
   | "eraser"
   | "fill"
   | "picker"
+  | "select"
   | "line"
   | "rectangle"
   | "circle"
@@ -75,6 +78,14 @@ type ToolId =
   | "heart";
 
 type Point = { x: number; y: number };
+
+type PaintSelection = {
+  image: ImageData;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
 
 type CanvasSize = {
   id: string;
@@ -101,6 +112,7 @@ const TOOLS: Array<{ id: ToolId; label: string; icon: LucideIcon; group: "paint"
   { id: "eraser", label: "Eraser", icon: Eraser, group: "paint" },
   { id: "fill", label: "Bucket fill", icon: PaintBucket, group: "paint" },
   { id: "picker", label: "Color picker", icon: Pipette, group: "paint" },
+  { id: "select", label: "Select / move", icon: MousePointer2, group: "paint" },
   { id: "line", label: "Line", icon: Minus, group: "shape" },
   { id: "rectangle", label: "Rectangle", icon: Square, group: "shape" },
   { id: "circle", label: "Circle", icon: Circle, group: "shape" },
@@ -299,6 +311,8 @@ export function PaintingStudio() {
   const lastPointRef = useRef<Point>({ x: 0, y: 0 });
   const startPointRef = useRef<Point>({ x: 0, y: 0 });
   const shapeBaseRef = useRef<ImageData | null>(null);
+  const selectionRef = useRef<PaintSelection | null>(null);
+  const selectionDragRef = useRef<{ offsetX: number; offsetY: number } | null>(null);
   const historyRef = useRef<ImageData[]>([]);
   const historyIndexRef = useRef(-1);
   const activeTemplateRef = useRef<DrawingTemplate>(drawingTemplates[0]);
@@ -316,6 +330,7 @@ export function PaintingStudio() {
   const [shapeFill, setShapeFill] = useState(false);
   const [canvasSize, setCanvasSize] = useState<CanvasSize>(CANVAS_SIZES[0]);
   const [zoom, setZoom] = useState(0.72);
+  const [blackPaper, setBlackPaper] = useState(false);
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState<(typeof templateCategories)[number]>("All");
   const [mixA, setMixA] = useState("#f4cc48");
@@ -328,6 +343,7 @@ export function PaintingStudio() {
   const [savedTemplateIds, setSavedTemplateIds] = useState<Set<string>>(() => new Set());
   const [isRestored, setIsRestored] = useState(false);
   const [wallPreviewUrl, setWallPreviewUrl] = useState<string | null>(null);
+  const [selectionBox, setSelectionBox] = useState<PaintSelection | null>(null);
   const [leftSidebarOpen, setLeftSidebarOpen] = useState(true);
   const [rightSidebarOpen, setRightSidebarOpen] = useState(true);
   const [referencePainting, setReferencePainting] = useState<MasterpieceReference | null>(null);
@@ -411,6 +427,9 @@ export function PaintingStudio() {
     const paintCanvas = paintCanvasRef.current;
     const guideCanvas = guideCanvasRef.current;
     if (!paintCanvas || !guideCanvas) return;
+    selectionRef.current = null;
+    selectionDragRef.current = null;
+    setSelectionBox(null);
     const token = restoreTokenRef.current + 1;
     restoreTokenRef.current = token;
     isRestoringRef.current = true;
@@ -763,7 +782,7 @@ export function PaintingStudio() {
       const image = context.getImageData(0, 0, width, height);
       const guideImage = guideContext.getImageData(0, 0, width, height);
       const startIndex = (startY * width + startX) * 4;
-      if (guideImage.data[startIndex + 3] > 55) return;
+      if (guideImage.data[startIndex + 3] > 20) return;
 
       const target = image.data[startIndex + 3] < 8
         ? [255, 255, 255, 0]
@@ -777,16 +796,18 @@ export function PaintingStudio() {
         Math.abs(target[3] - fillAlpha) < 4
       ) return;
 
-      const tolerance = 34;
+      const tolerance = 42;
+      const targetIsTransparent = target[3] < 32;
       const stack = new Int32Array(width * height);
       let top = 0;
       const matches = (pixelIndex: number) => {
-        if (guideImage.data[pixelIndex + 3] > 55) return false;
+        if (guideImage.data[pixelIndex + 3] > 20) return false;
         const alpha = image.data[pixelIndex + 3];
-        const red = alpha < 8 ? 255 : image.data[pixelIndex];
-        const green = alpha < 8 ? 255 : image.data[pixelIndex + 1];
-        const blue = alpha < 8 ? 255 : image.data[pixelIndex + 2];
-        const targetAlpha = target[3] < 8 ? 0 : alpha;
+        if (targetIsTransparent && alpha < 96) return true;
+        const red = alpha < 32 ? 255 : image.data[pixelIndex];
+        const green = alpha < 32 ? 255 : image.data[pixelIndex + 1];
+        const blue = alpha < 32 ? 255 : image.data[pixelIndex + 2];
+        const targetAlpha = targetIsTransparent ? 0 : alpha;
         return (
           Math.abs(red - target[0]) <= tolerance &&
           Math.abs(green - target[1]) <= tolerance &&
@@ -832,6 +853,78 @@ export function PaintingStudio() {
     [announce, commitSnapshot, opacity, selectedColor],
   );
 
+  const selectPaintRegion = useCallback((point: Point) => {
+    const canvas = paintCanvasRef.current;
+    const context = canvas?.getContext("2d");
+    if (!canvas || !context) return null;
+    const image = context.getImageData(0, 0, canvas.width, canvas.height);
+    const alphaAt = (x: number, y: number) => image.data[(y * canvas.width + x) * 4 + 3];
+    let startX = Math.max(0, Math.min(canvas.width - 1, Math.floor(point.x)));
+    let startY = Math.max(0, Math.min(canvas.height - 1, Math.floor(point.y)));
+    if (alphaAt(startX, startY) < 16) {
+      let found = false;
+      for (let radius = 1; radius <= 18 && !found; radius += 1) {
+        for (let y = Math.max(0, startY - radius); y <= Math.min(canvas.height - 1, startY + radius) && !found; y += 1) {
+          for (let x = Math.max(0, startX - radius); x <= Math.min(canvas.width - 1, startX + radius); x += 1) {
+            if (alphaAt(x, y) >= 16) { startX = x; startY = y; found = true; break; }
+          }
+        }
+      }
+      if (!found) return null;
+    }
+    const visited = new Uint8Array(canvas.width * canvas.height);
+    const queue = new Int32Array(canvas.width * canvas.height);
+    let head = 0;
+    let tail = 0;
+    const startIndex = startY * canvas.width + startX;
+    queue[tail++] = startIndex;
+    visited[startIndex] = 1;
+    let minX = startX;
+    let maxX = startX;
+    let minY = startY;
+    let maxY = startY;
+    while (head < tail) {
+      const pixel = queue[head++];
+      const x = pixel % canvas.width;
+      const y = Math.floor(pixel / canvas.width);
+      minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+      minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+      const neighbors = [x > 0 ? pixel - 1 : -1, x < canvas.width - 1 ? pixel + 1 : -1, y > 0 ? pixel - canvas.width : -1, y < canvas.height - 1 ? pixel + canvas.width : -1];
+      neighbors.forEach((neighbor) => {
+        if (neighbor < 0 || visited[neighbor]) return;
+        const nx = neighbor % canvas.width;
+        const ny = Math.floor(neighbor / canvas.width);
+        if (alphaAt(nx, ny) < 16) return;
+        visited[neighbor] = 1;
+        queue[tail++] = neighbor;
+      });
+    }
+    const padding = Math.max(4, Math.ceil(brushSize * 0.8));
+    const x = Math.max(0, minX - padding);
+    const y = Math.max(0, minY - padding);
+    const right = Math.min(canvas.width, maxX + padding + 1);
+    const bottom = Math.min(canvas.height, maxY + padding + 1);
+    const selection = { image: context.getImageData(x, y, right - x, bottom - y), x, y, width: right - x, height: bottom - y };
+    context.clearRect(x, y, selection.width, selection.height);
+    context.putImageData(selection.image, x, y);
+    selectionRef.current = selection;
+    setSelectionBox(selection);
+    return selection;
+  }, [brushSize]);
+
+  const deleteSelection = useCallback(() => {
+    const canvas = paintCanvasRef.current;
+    const context = canvas?.getContext("2d");
+    const selection = selectionRef.current;
+    if (!canvas || !context || !selection) return;
+    context.clearRect(selection.x, selection.y, selection.width, selection.height);
+    selectionRef.current = null;
+    selectionDragRef.current = null;
+    setSelectionBox(null);
+    commitSnapshot();
+    announce("Selection deleted");
+  }, [announce, commitSnapshot]);
+
   const handlePointerDown = useCallback(
     (event: React.PointerEvent<HTMLCanvasElement>) => {
       event.preventDefault();
@@ -839,6 +932,18 @@ export function PaintingStudio() {
       const context = canvas?.getContext("2d");
       if (!canvas || !context) return;
       const point = pointFromEvent(event);
+      if (activeTool === "select") {
+        const selection = selectPaintRegion(point);
+        if (selection) {
+          canvas.setPointerCapture(event.pointerId);
+          isDrawingRef.current = true;
+          selectionDragRef.current = { offsetX: point.x - selection.x, offsetY: point.y - selection.y };
+        } else {
+          selectionRef.current = null;
+          setSelectionBox(null);
+        }
+        return;
+      }
       if (activeTool === "fill") {
         floodFill(point);
         return;
@@ -857,7 +962,7 @@ export function PaintingStudio() {
         drawFreehandSegment(context, point, { x: point.x + 0.1, y: point.y + 0.1 }, event.pressure);
       }
     },
-    [activeTool, drawFreehandSegment, floodFill, pickColor, pointFromEvent],
+    [activeTool, drawFreehandSegment, floodFill, pickColor, pointFromEvent, selectPaintRegion],
   );
 
   const handlePointerMove = useCallback(
@@ -868,7 +973,16 @@ export function PaintingStudio() {
       const context = canvas?.getContext("2d");
       if (!canvas || !context) return;
       const point = pointFromEvent(event);
-      if (isShapeTool(activeTool) && shapeBaseRef.current) {
+      if (activeTool === "select" && selectionRef.current && selectionDragRef.current) {
+        const selection = selectionRef.current;
+        const nextX = Math.max(0, Math.min(canvas.width - selection.width, point.x - selectionDragRef.current.offsetX));
+        const nextY = Math.max(0, Math.min(canvas.height - selection.height, point.y - selectionDragRef.current.offsetY));
+        context.clearRect(selection.x, selection.y, selection.width, selection.height);
+        context.putImageData(selection.image, nextX, nextY);
+        const nextSelection = { ...selection, x: nextX, y: nextY };
+        selectionRef.current = nextSelection;
+        setSelectionBox(nextSelection);
+      } else if (isShapeTool(activeTool) && shapeBaseRef.current) {
         context.putImageData(shapeBaseRef.current, 0, 0);
         drawShape(context, startPointRef.current, point);
       } else {
@@ -886,10 +1000,11 @@ export function PaintingStudio() {
       const canvas = paintCanvasRef.current;
       if (canvas?.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
       shapeBaseRef.current = null;
+      selectionDragRef.current = null;
       commitSnapshot();
-      announce("Stroke added");
+      announce(activeTool === "select" ? "Selection moved" : "Stroke added");
     },
-    [announce, commitSnapshot],
+    [activeTool, announce, commitSnapshot],
   );
 
   const undo = useCallback(() => {
@@ -918,6 +1033,9 @@ export function PaintingStudio() {
     const canvas = paintCanvasRef.current;
     const context = canvas?.getContext("2d");
     if (!canvas || !context) return;
+    selectionRef.current = null;
+    selectionDragRef.current = null;
+    setSelectionBox(null);
     context.clearRect(0, 0, canvas.width, canvas.height);
     commitSnapshot();
     announce("Canvas cleared");
@@ -940,6 +1058,9 @@ export function PaintingStudio() {
       const paintCanvas = paintCanvasRef.current;
       const guideCanvas = guideCanvasRef.current;
       if (!paintCanvas || !guideCanvas) return;
+      selectionRef.current = null;
+      selectionDragRef.current = null;
+      setSelectionBox(null);
       const copy = document.createElement("canvas");
       copy.width = paintCanvas.width;
       copy.height = paintCanvas.height;
@@ -968,12 +1089,19 @@ export function PaintingStudio() {
     output.height = paintCanvas.height;
     const context = output.getContext("2d");
     if (!context) return null;
-    context.fillStyle = "#fffdf8";
+    context.fillStyle = blackPaper ? "#161a1d" : "#fffdf8";
     context.fillRect(0, 0, output.width, output.height);
     context.drawImage(paintCanvas, 0, 0);
-    context.drawImage(guideCanvas, 0, 0);
+    if (blackPaper) {
+      context.save();
+      context.filter = "invert(1)";
+      context.drawImage(guideCanvas, 0, 0);
+      context.restore();
+    } else {
+      context.drawImage(guideCanvas, 0, 0);
+    }
     return output;
-  }, []);
+  }, [blackPaper]);
 
   const downloadArtwork = useCallback(() => {
     const output = composeArtwork();
@@ -1054,10 +1182,11 @@ export function PaintingStudio() {
       else if (event.key.toLowerCase() === "g") setActiveTool("fill");
       else if (event.key === "[") setBrushSize((size) => Math.max(1, size - 2));
       else if (event.key === "]") setBrushSize((size) => Math.min(120, size + 2));
+      else if ((event.key === "Delete" || event.key === "Backspace") && activeTool === "select") deleteSelection();
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [redo, undo]);
+  }, [activeTool, deleteSelection, redo, undo]);
 
   const paintTools = TOOLS.filter((tool) => tool.group === "paint");
   const shapeTools = TOOLS.filter((tool) => tool.group === "shape");
@@ -1126,6 +1255,7 @@ export function PaintingStudio() {
           </button>
 
           <MasterpieceGallery onOpenTemplate={openTemplateById} onUsePalette={useReferencePalette} onOpenReference={openReference} />
+          <WorldReferenceAtlas onOpenReference={openReference} />
 
           <label className="search-box">
             <Search size={16} aria-hidden="true" />
@@ -1179,6 +1309,7 @@ export function PaintingStudio() {
               <button type="button" onClick={undo} disabled={!canUndo} aria-label="Undo" title="Undo · Ctrl/⌘ Z"><Undo2 size={18} /></button>
               <button type="button" onClick={redo} disabled={!canRedo} aria-label="Redo" title="Redo · Ctrl/⌘ Shift Z"><Redo2 size={18} /></button>
               <span className="bar-divider" />
+              {selectionBox ? <button type="button" onClick={deleteSelection} aria-label="Delete selected element" title="Delete selected element"><Trash2 size={17} /></button> : null}
               <button type="button" onClick={clearPainting} aria-label="Clear paint" title="Clear paint"><Trash2 size={17} /></button>
             </div>
           </div>
@@ -1201,7 +1332,7 @@ export function PaintingStudio() {
               <span>{opacity}% flow</span>
             </div>
             <div
-              className="canvas-stack"
+              className={`canvas-stack ${blackPaper ? "black-paper" : ""}`}
               style={{ width: `${displayWidth}px`, aspectRatio: `${canvasSize.width} / ${canvasSize.height}` }}
             >
               <canvas
@@ -1214,6 +1345,7 @@ export function PaintingStudio() {
                 aria-label={`Interactive painting canvas with ${activeTemplate.title} guide`}
               />
               <canvas ref={guideCanvasRef} className="guide-canvas" aria-hidden="true" />
+              {selectionBox ? <div className="selection-outline" style={{ left: `${(selectionBox.x / canvasSize.width) * 100}%`, top: `${(selectionBox.y / canvasSize.height) * 100}%`, width: `${(selectionBox.width / canvasSize.width) * 100}%`, height: `${(selectionBox.height / canvasSize.height) * 100}%` }} aria-label="Selected painted element" /> : null}
             </div>
           </div>
 
@@ -1241,6 +1373,7 @@ export function PaintingStudio() {
               <span>{Math.round(zoom * 100)}%</span>
               <button type="button" onClick={() => setZoom((value) => Math.min(1.35, value + 0.1))} aria-label="Zoom in"><ZoomIn size={16} /></button>
               <button type="button" onClick={() => setZoom(0.72)} aria-label="Reset zoom"><RotateCcw size={14} /></button>
+              <button type="button" className={blackPaper ? "is-active" : ""} onClick={() => setBlackPaper((enabled) => !enabled)} aria-pressed={blackPaper} aria-label="Toggle black paper" title="Toggle black paper">◐</button>
             </div>
           </div>
         </section>
