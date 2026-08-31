@@ -17,6 +17,10 @@ import {
   Minus,
   PaintBucket,
   Palette,
+  PanelLeft,
+  PanelLeftClose,
+  PanelRight,
+  PanelRightClose,
   PenLine,
   Pipette,
   Printer,
@@ -51,6 +55,7 @@ import {
   templateCategories,
   type DrawingTemplate,
 } from "@/lib/templates";
+import type { MasterpieceReference } from "@/lib/masterpiece-references";
 
 type ToolId =
   | "pencil"
@@ -259,10 +264,14 @@ function ToolButton({
   tool,
   active,
   onClick,
+  draggable,
+  onDragStart,
 }: {
   tool: (typeof TOOLS)[number];
   active: boolean;
   onClick: () => void;
+  draggable?: boolean;
+  onDragStart?: (event: React.DragEvent<HTMLButtonElement>) => void;
 }) {
   const Icon = tool.icon;
   return (
@@ -270,6 +279,8 @@ function ToolButton({
       type="button"
       className={`tool-button ${active ? "is-active" : ""}`}
       onClick={onClick}
+      draggable={draggable}
+      onDragStart={onDragStart}
       aria-label={tool.label}
       aria-pressed={active}
       title={tool.label}
@@ -317,6 +328,10 @@ export function PaintingStudio() {
   const [savedTemplateIds, setSavedTemplateIds] = useState<Set<string>>(() => new Set());
   const [isRestored, setIsRestored] = useState(false);
   const [wallPreviewUrl, setWallPreviewUrl] = useState<string | null>(null);
+  const [leftSidebarOpen, setLeftSidebarOpen] = useState(true);
+  const [rightSidebarOpen, setRightSidebarOpen] = useState(true);
+  const [referencePainting, setReferencePainting] = useState<MasterpieceReference | null>(null);
+  const [referenceZoom, setReferenceZoom] = useState(1);
 
   const announce = useCallback((message: string) => {
     setNotice(message);
@@ -549,8 +564,15 @@ export function PaintingStudio() {
     };
   }, []);
 
+  const pointFromClient = useCallback((clientX: number, clientY: number) => {
+    const canvas = paintCanvasRef.current;
+    if (!canvas) return { x: 0, y: 0 };
+    const bounds = canvas.getBoundingClientRect();
+    return { x: ((clientX - bounds.left) / bounds.width) * canvas.width, y: ((clientY - bounds.top) / bounds.height) * canvas.height };
+  }, []);
+
   const drawShape = useCallback(
-    (context: CanvasRenderingContext2D, start: Point, end: Point) => {
+    (context: CanvasRenderingContext2D, start: Point, end: Point, tool = activeTool) => {
       const width = end.x - start.x;
       const height = end.y - start.y;
       context.save();
@@ -562,21 +584,21 @@ export function PaintingStudio() {
       context.lineJoin = "round";
       context.beginPath();
 
-      if (activeTool === "line") {
+      if (tool === "line") {
         context.moveTo(start.x, start.y);
         context.lineTo(end.x, end.y);
-      } else if (activeTool === "rectangle") {
+      } else if (tool === "rectangle") {
         context.rect(start.x, start.y, width, height);
-      } else if (activeTool === "circle") {
+      } else if (tool === "circle") {
         const centerX = start.x + width / 2;
         const centerY = start.y + height / 2;
         context.ellipse(centerX, centerY, Math.abs(width / 2), Math.abs(height / 2), 0, 0, Math.PI * 2);
-      } else if (activeTool === "triangle") {
+      } else if (tool === "triangle") {
         context.moveTo(start.x + width / 2, start.y);
         context.lineTo(end.x, end.y);
         context.lineTo(start.x, end.y);
         context.closePath();
-      } else if (activeTool === "star") {
+      } else if (tool === "star") {
         const centerX = start.x + width / 2;
         const centerY = start.y + height / 2;
         const outer = Math.max(Math.abs(width), Math.abs(height)) / 2;
@@ -590,7 +612,7 @@ export function PaintingStudio() {
           else context.lineTo(x, y);
         }
         context.closePath();
-      } else if (activeTool === "heart") {
+      } else if (tool === "heart") {
         const left = Math.min(start.x, end.x);
         const top = Math.min(start.y, end.y);
         const heartWidth = Math.abs(width);
@@ -603,12 +625,26 @@ export function PaintingStudio() {
         context.closePath();
       }
 
-      if (shapeFill && activeTool !== "line") context.fill();
+      if (shapeFill && tool !== "line") context.fill();
       context.stroke();
       context.restore();
     },
     [activeTool, brushSize, opacity, selectedColor, shapeFill],
   );
+
+  const handleShapeDrop = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    const shape = event.dataTransfer.getData("application/x-pigmenta-shape") as ToolId;
+    if (!isShapeTool(shape)) return;
+    event.preventDefault();
+    const canvas = paintCanvasRef.current;
+    const context = canvas?.getContext("2d");
+    if (!canvas || !context) return;
+    const point = pointFromClient(event.clientX, event.clientY);
+    const halfSize = Math.max(36, brushSize * 2.2);
+    drawShape(context, { x: point.x - halfSize, y: point.y - halfSize }, { x: point.x + halfSize, y: point.y + halfSize }, shape);
+    commitSnapshot();
+    announce(`${shape} placed on canvas`);
+  }, [announce, brushSize, commitSnapshot, drawShape, pointFromClient]);
 
   const drawFreehandSegment = useCallback(
     (context: CanvasRenderingContext2D, from: Point, to: Point, pressure: number) => {
@@ -980,6 +1016,13 @@ export function PaintingStudio() {
     if (template) void chooseTemplate(template);
   }, [chooseTemplate]);
 
+  const openReference = useCallback((painting: MasterpieceReference) => {
+    if (activeTemplateRef.current.id !== blankTemplate.id) void chooseTemplate(blankTemplate);
+    setReferenceZoom(1);
+    setReferencePainting(painting);
+    announce(`${painting.title} opened beside the canvas`);
+  }, [announce, chooseTemplate]);
+
   const useReferencePalette = useCallback((colors: string[]) => {
     setStudioPalette((current) => [
       ...colors,
@@ -1060,13 +1103,15 @@ export function PaintingStudio() {
         </div>
       </header>
 
-      <section className="workspace" id="studio">
-        <aside className="template-panel" id="gallery">
+      <section className={`workspace ${leftSidebarOpen ? "has-left-sidebar" : "no-left-sidebar"} ${rightSidebarOpen ? "has-right-sidebar" : "no-right-sidebar"} ${referencePainting ? "has-reference" : ""}`} id="studio">
+        {!leftSidebarOpen ? <button className="sidebar-reopen sidebar-reopen-left" type="button" onClick={() => setLeftSidebarOpen(true)} aria-label="Open drawing library" title="Open drawing library"><PanelLeft size={16} /></button> : null}
+        {leftSidebarOpen ? <aside className="template-panel" id="gallery">
           <div className="panel-heading">
             <div>
               <p className="eyebrow">Choose a structure</p>
               <h1>Coloring library</h1>
             </div>
+            <button className="panel-toggle" type="button" onClick={() => setLeftSidebarOpen(false)} aria-label="Close drawing library" title="Close drawing library"><PanelLeftClose size={16} /></button>
             <span className="count-pill">{drawingTemplates.length}</span>
           </div>
 
@@ -1080,7 +1125,7 @@ export function PaintingStudio() {
             <span className="new-pill">Custom</span>
           </button>
 
-          <MasterpieceGallery onOpenTemplate={openTemplateById} onUsePalette={useReferencePalette} />
+          <MasterpieceGallery onOpenTemplate={openTemplateById} onUsePalette={useReferencePalette} onOpenReference={openReference} />
 
           <label className="search-box">
             <Search size={16} aria-hidden="true" />
@@ -1121,9 +1166,10 @@ export function PaintingStudio() {
             ))}
           </div>
           {filteredTemplates.length === 0 ? <p className="empty-state">No outlines match that search.</p> : null}
-        </aside>
+        </aside> : null}
 
         <section className="canvas-column">
+          {!rightSidebarOpen ? <button className="sidebar-reopen sidebar-reopen-right" type="button" onClick={() => setRightSidebarOpen(true)} aria-label="Open tools sidebar" title="Open tools sidebar"><PanelRight size={16} /></button> : null}
           <div className="document-bar">
             <div className="document-title">
               <span className="document-icon"><ImageIcon size={16} /></span>
@@ -1141,11 +1187,11 @@ export function PaintingStudio() {
             <div className="tool-scroll">
               {paintTools.map((tool) => <ToolButton key={tool.id} tool={tool} active={tool.id === activeTool} onClick={() => setActiveTool(tool.id)} />)}
               <span className="tool-divider" />
-              {shapeTools.map((tool) => <ToolButton key={tool.id} tool={tool} active={tool.id === activeTool} onClick={() => setActiveTool(tool.id)} />)}
+              {shapeTools.map((tool) => <ToolButton key={tool.id} tool={tool} active={tool.id === activeTool} onClick={() => setActiveTool(tool.id)} draggable onDragStart={(event) => { event.dataTransfer.effectAllowed = "copy"; event.dataTransfer.setData("application/x-pigmenta-shape", tool.id); }} />)}
             </div>
           </div>
 
-          <div className="canvas-stage">
+          <div className="canvas-stage" onDragOver={(event) => { if (event.dataTransfer.types.includes("application/x-pigmenta-shape")) event.preventDefault(); }} onDrop={handleShapeDrop}>
             <div className="stage-note">
               <SelectedToolIcon size={14} />
               <span>{selectedTool?.label}</span>
@@ -1199,9 +1245,21 @@ export function PaintingStudio() {
           </div>
         </section>
 
-        <aside className="inspector-panel">
+        {referencePainting ? (
+          <aside className="reference-panel" aria-label="Painting reference">
+            <div className="reference-panel-header">
+              <div><span>Copy beside canvas</span><strong>{referencePainting.title}</strong><small>{referencePainting.artist} · {referencePainting.date}</small></div>
+              <div className="reference-header-actions"><div className="reference-zoom"><button type="button" onClick={() => setReferenceZoom((zoom) => Math.max(0.65, zoom - 0.15))} aria-label="Zoom reference out">−</button><span>{Math.round(referenceZoom * 100)}%</span><button type="button" onClick={() => setReferenceZoom((zoom) => Math.min(2.4, zoom + 0.15))} aria-label="Zoom reference in">+</button></div><button type="button" className="modal-close is-static" onClick={() => setReferencePainting(null)} aria-label="Close painting reference">×</button></div>
+            </div>
+            <div className="reference-panel-image"><img src={referencePainting.image} alt={`${referencePainting.title} by ${referencePainting.artist}`} style={{ transform: `scale(${referenceZoom})` }} /></div>
+            <p className="reference-panel-lesson">{referencePainting.lesson}</p>
+            <button type="button" className="button button-ghost reference-source" onClick={() => window.open(referencePainting.sourceUrl, "_blank", "noopener,noreferrer")}>View source ↗</button>
+          </aside>
+        ) : null}
+
+        {rightSidebarOpen ? <aside className="inspector-panel">
           <section className="inspector-section color-section">
-            <div className="section-title"><span><Palette size={17} /> Color</span><small>16.7M sRGB colors</small></div>
+            <div className="section-title"><span><Palette size={17} /> Color</span><div className="section-title-actions"><small>16.7M sRGB colors</small><button className="panel-toggle" type="button" onClick={() => setRightSidebarOpen(false)} aria-label="Close tools sidebar" title="Close tools sidebar"><PanelRightClose size={16} /></button></div></div>
             <div className="color-hero">
               <label className="color-well" style={{ background: selectedColor }}>
                 <input
@@ -1289,7 +1347,7 @@ export function PaintingStudio() {
               </details>
             ))}
           </section>
-        </aside>
+        </aside> : null}
       </section>
       {wallPreviewUrl ? (
         <WallPreview

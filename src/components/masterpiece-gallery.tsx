@@ -8,9 +8,10 @@ import { masterpieceReferences, type MasterpieceReference } from "@/lib/masterpi
 type MasterpieceGalleryProps = {
   onOpenTemplate: (templateId: string) => void;
   onUsePalette: (colors: string[]) => void;
+  onOpenReference: (painting: MasterpieceReference) => void;
 };
 
-export function MasterpieceGallery({ onOpenTemplate, onUsePalette }: MasterpieceGalleryProps) {
+export function MasterpieceGallery({ onOpenTemplate, onUsePalette, onOpenReference }: MasterpieceGalleryProps) {
   const [selected, setSelected] = useState<MasterpieceReference | null>(null);
 
   return (
@@ -22,7 +23,7 @@ export function MasterpieceGallery({ onOpenTemplate, onUsePalette }: Masterpiece
         </div>
         <div className="masterpiece-grid">
           {masterpieceReferences.map((painting) => (
-            <button type="button" key={painting.id} onClick={() => setSelected(painting)}>
+            <button type="button" key={painting.id} onClick={() => { onOpenReference(painting); setSelected(null); }}>
               <span className="masterpiece-thumb">
                 <Image src={painting.image} alt="" fill sizes="100px" />
               </span>
@@ -58,6 +59,9 @@ export function MasterpieceGallery({ onOpenTemplate, onUsePalette }: Masterpiece
               <div className="masterpiece-actions">
                 <button type="button" className="button button-primary" onClick={() => { onUsePalette(selected.palette); setSelected(null); }}>
                   <Palette size={15} /> Use this palette
+                </button>
+                <button type="button" className="button button-ghost" onClick={() => { onOpenReference(selected); setSelected(null); }}>
+                  View beside canvas
                 </button>
                 <button type="button" className="button button-ghost" onClick={() => { onOpenTemplate(selected.linkedTemplateId); setSelected(null); }}>
                   Open matching study
