@@ -259,6 +259,13 @@ function drawGuide(canvas: HTMLCanvasElement, template: DrawingTemplate) {
   context.restore();
 }
 
+function replayPaintColor(template: DrawingTemplate, index: number) {
+  if (template.id === "butterfly-garden") {
+    return ["#f8b91e", "#d9369a", "#159dd9", "#f47b20", "#87c93a", "#26364a", "#26364a", "#f8b91e", "#f8b91e", "#e83e9c", "#f8b91e"][index] ?? "#e56b4e";
+  }
+  return ["#f47b20", "#e83e9c", "#159dd9", "#87c93a", "#f8b91e", "#7d5ac7"][index % 6];
+}
+
 function TemplatePreview({ template }: { template: DrawingTemplate }) {
   return (
     <svg viewBox="0 0 1000 1000" role="img" aria-label={`${template.title} outline preview`}>
@@ -318,6 +325,8 @@ export function PaintingStudio() {
   const activeTemplateRef = useRef<DrawingTemplate>(drawingTemplates[0]);
   const canvasSizeRef = useRef<CanvasSize>(CANVAS_SIZES[0]);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const replayFrameRef = useRef<number | null>(null);
+  const replayBackupRef = useRef<ImageData | null>(null);
   const restoreTokenRef = useRef(0);
   const isRestoringRef = useRef(false);
   const hasInitializedRef = useRef(false);
@@ -344,6 +353,8 @@ export function PaintingStudio() {
   const [isRestored, setIsRestored] = useState(false);
   const [wallPreviewUrl, setWallPreviewUrl] = useState<string | null>(null);
   const [selectionBox, setSelectionBox] = useState<PaintSelection | null>(null);
+  const [isReplaying, setIsReplaying] = useState(false);
+  const [replayProgress, setReplayProgress] = useState(0);
   const [leftSidebarOpen, setLeftSidebarOpen] = useState(true);
   const [rightSidebarOpen, setRightSidebarOpen] = useState(true);
   const [referencePainting, setReferencePainting] = useState<MasterpieceReference | null>(null);
@@ -1080,6 +1091,77 @@ export function PaintingStudio() {
     [activeTemplate, announce, queueArtworkSave, resetHistory],
   );
 
+  const stopReplay = useCallback((restore = true) => {
+    if (replayFrameRef.current !== null) cancelAnimationFrame(replayFrameRef.current);
+    replayFrameRef.current = null;
+    if (restore && replayBackupRef.current) {
+      const canvas = paintCanvasRef.current;
+      const context = canvas?.getContext("2d");
+      if (canvas && context) context.putImageData(replayBackupRef.current, 0, 0);
+    }
+    replayBackupRef.current = null;
+    setIsReplaying(false);
+  }, []);
+
+  const playReplay = useCallback(() => {
+    const canvas = paintCanvasRef.current;
+    const context = canvas?.getContext("2d");
+    if (!canvas || !context || isReplaying) return;
+    replayBackupRef.current = context.getImageData(0, 0, canvas.width, canvas.height);
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    resetHistory();
+    setReplayProgress(0);
+    setIsReplaying(true);
+    announce("Replay started — coloring Butterfly Garden");
+
+    const scale = Math.min(canvas.width, canvas.height) / 1000;
+    const offsetX = (canvas.width - 1000 * scale) / 2;
+    const offsetY = (canvas.height - 1000 * scale) / 2;
+    const startedAt = performance.now();
+    const duration = Math.max(5200, activeTemplate.paths.length * 520);
+    const drawFrame = (now: number) => {
+      const progress = Math.min(1, (now - startedAt) / duration);
+      const pathProgress = progress * activeTemplate.paths.length;
+      context.clearRect(0, 0, canvas.width, canvas.height);
+      context.save();
+      context.translate(offsetX, offsetY);
+      context.scale(scale, scale);
+      context.lineWidth = 5;
+      context.lineCap = "round";
+      context.lineJoin = "round";
+      activeTemplate.paths.forEach((path, index) => {
+        const local = Math.max(0, Math.min(1, pathProgress - index));
+        if (local <= 0) return;
+        const shape = new Path2D(path);
+        const color = replayPaintColor(activeTemplate, index);
+        context.globalAlpha = 0.25 + local * 0.75;
+        if (/[zZ]\s*$/.test(path)) {
+          const gradient = context.createLinearGradient(0, 120 + index * 20, 1000, 860 - index * 12);
+          gradient.addColorStop(0, color);
+          gradient.addColorStop(0.55, mixHex(color, "#ffffff", 0.2));
+          gradient.addColorStop(1, mixHex(color, "#172033", 0.16));
+          context.fillStyle = gradient;
+          context.fill(shape);
+        }
+        context.strokeStyle = "#20201d";
+        context.stroke(shape);
+      });
+      context.restore();
+      setReplayProgress(progress);
+      if (progress < 1) replayFrameRef.current = requestAnimationFrame(drawFrame);
+      else {
+        replayFrameRef.current = null;
+        replayBackupRef.current = null;
+        setIsReplaying(false);
+        commitSnapshot();
+        announce("Replay finished — ready to record");
+      }
+    };
+    replayFrameRef.current = requestAnimationFrame(drawFrame);
+  }, [activeTemplate, announce, commitSnapshot, isReplaying, resetHistory]);
+
+  useEffect(() => () => stopReplay(false), [stopReplay]);
+
   const composeArtwork = useCallback(() => {
     const paintCanvas = paintCanvasRef.current;
     const guideCanvas = guideCanvasRef.current;
@@ -1367,6 +1449,12 @@ export function PaintingStudio() {
               </select>
               <ChevronDown size={14} aria-hidden="true" />
             </label>
+            <div className="replay-controls">
+              <button type="button" className="replay-button" onClick={isReplaying ? () => stopReplay(true) : playReplay} aria-label={isReplaying ? "Stop replay" : "Replay painting"}>
+                {isReplaying ? "Stop replay" : "▶ Replay painting"}
+              </button>
+              {replayProgress > 0 ? <span className="replay-progress">{Math.round(replayProgress * 100)}%</span> : null}
+            </div>
             <p className="status-line" aria-live="polite"><span /> {notice}</p>
             <div className="zoom-control">
               <button type="button" onClick={() => setZoom((value) => Math.max(0.45, value - 0.1))} aria-label="Zoom out"><ZoomOut size={16} /></button>

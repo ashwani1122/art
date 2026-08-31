@@ -906,6 +906,36 @@ button {
   padding: 0 15px;
 }
 
+.replay-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.replay-button {
+  border: 1px solid #f06b51;
+  border-radius: 999px;
+  background: #fff7f2;
+  color: #b94a36;
+  padding: 8px 12px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.replay-button:hover {
+  background: #f06b51;
+  color: white;
+}
+
+.replay-progress {
+  color: #8c8178;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
 .size-select {
   justify-self: start;
   height: 30px;
