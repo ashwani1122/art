@@ -1689,24 +1689,29 @@ kbd {
   position: absolute;
   z-index: 2;
   left: 50%;
-  top: 11.5%;
-  width: 25%;
-  height: 40%;
-  padding: 1.2%;
+  top: 8.5%;
+  width: 28%;
+  aspect-ratio: 4 / 5;
+  height: auto;
+  box-sizing: border-box;
+  padding: 1.05%;
   display: grid;
   place-items: center;
-  transform: translateX(-50%);
+  transform: translate(-50%, 0);
   background: #f7f1e5;
-  border: 8px solid #4b3526;
-  box-shadow: 0 14px 25px rgba(45, 29, 16, 0.3), inset 0 0 0 2px #aa865e;
+  border: clamp(5px, 0.65vw, 10px) solid #4b3526;
+  box-shadow: 0 18px 30px rgba(45, 29, 16, 0.34), inset 0 0 0 2px #aa865e;
 }
 
 .room-artwork-frame img {
   width: 100%;
   height: 100%;
   display: block;
+  min-width: 0;
+  min-height: 0;
   object-fit: contain;
   background: #fffdf8;
+  border: 1px solid rgba(75, 53, 38, 0.18);
 }
 
 .wall-caption {
