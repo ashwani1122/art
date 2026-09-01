@@ -259,13 +259,6 @@ function drawGuide(canvas: HTMLCanvasElement, template: DrawingTemplate) {
   context.restore();
 }
 
-function replayPaintColor(template: DrawingTemplate, index: number) {
-  if (template.id === "butterfly-garden") {
-    return ["#f8b91e", "#d9369a", "#159dd9", "#f47b20", "#87c93a", "#26364a", "#26364a", "#f8b91e", "#f8b91e", "#e83e9c", "#f8b91e"][index] ?? "#e56b4e";
-  }
-  return ["#f47b20", "#e83e9c", "#159dd9", "#87c93a", "#f8b91e", "#7d5ac7"][index % 6];
-}
-
 function TemplatePreview({ template }: { template: DrawingTemplate }) {
   return (
     <svg viewBox="0 0 1000 1000" role="img" aria-label={`${template.title} outline preview`}>
@@ -939,6 +932,7 @@ export function PaintingStudio() {
   const handlePointerDown = useCallback(
     (event: React.PointerEvent<HTMLCanvasElement>) => {
       event.preventDefault();
+      if (isReplaying) return;
       const canvas = paintCanvasRef.current;
       const context = canvas?.getContext("2d");
       if (!canvas || !context) return;
@@ -973,12 +967,12 @@ export function PaintingStudio() {
         drawFreehandSegment(context, point, { x: point.x + 0.1, y: point.y + 0.1 }, event.pressure);
       }
     },
-    [activeTool, drawFreehandSegment, floodFill, pickColor, pointFromEvent, selectPaintRegion],
+    [activeTool, drawFreehandSegment, floodFill, isReplaying, pickColor, pointFromEvent, selectPaintRegion],
   );
 
   const handlePointerMove = useCallback(
     (event: React.PointerEvent<HTMLCanvasElement>) => {
-      if (!isDrawingRef.current) return;
+      if (!isDrawingRef.current || isReplaying) return;
       event.preventDefault();
       const canvas = paintCanvasRef.current;
       const context = canvas?.getContext("2d");
@@ -1001,7 +995,7 @@ export function PaintingStudio() {
         lastPointRef.current = point;
       }
     },
-    [activeTool, drawFreehandSegment, drawShape, pointFromEvent],
+    [activeTool, drawFreehandSegment, drawShape, isReplaying, pointFromEvent],
   );
 
   const handlePointerUp = useCallback(
@@ -1107,58 +1101,41 @@ export function PaintingStudio() {
     const canvas = paintCanvasRef.current;
     const context = canvas?.getContext("2d");
     if (!canvas || !context || isReplaying) return;
-    replayBackupRef.current = context.getImageData(0, 0, canvas.width, canvas.height);
+    const original = context.getImageData(0, 0, canvas.width, canvas.height);
+    replayBackupRef.current = original;
     context.clearRect(0, 0, canvas.width, canvas.height);
-    resetHistory();
     setReplayProgress(0);
     setIsReplaying(true);
     announce("Replay started — coloring Butterfly Garden");
 
-    const scale = Math.min(canvas.width, canvas.height) / 1000;
-    const offsetX = (canvas.width - 1000 * scale) / 2;
-    const offsetY = (canvas.height - 1000 * scale) / 2;
+    const source = document.createElement("canvas");
+    source.width = canvas.width;
+    source.height = canvas.height;
+    source.getContext("2d")?.putImageData(original, 0, 0);
     const startedAt = performance.now();
-    const duration = Math.max(5200, activeTemplate.paths.length * 520);
+    const duration = 5200;
     const drawFrame = (now: number) => {
       const progress = Math.min(1, (now - startedAt) / duration);
-      const pathProgress = progress * activeTemplate.paths.length;
       context.clearRect(0, 0, canvas.width, canvas.height);
       context.save();
-      context.translate(offsetX, offsetY);
-      context.scale(scale, scale);
-      context.lineWidth = 5;
-      context.lineCap = "round";
-      context.lineJoin = "round";
-      activeTemplate.paths.forEach((path, index) => {
-        const local = Math.max(0, Math.min(1, pathProgress - index));
-        if (local <= 0) return;
-        const shape = new Path2D(path);
-        const color = replayPaintColor(activeTemplate, index);
-        context.globalAlpha = 0.25 + local * 0.75;
-        if (/[zZ]\s*$/.test(path)) {
-          const gradient = context.createLinearGradient(0, 120 + index * 20, 1000, 860 - index * 12);
-          gradient.addColorStop(0, color);
-          gradient.addColorStop(0.55, mixHex(color, "#ffffff", 0.2));
-          gradient.addColorStop(1, mixHex(color, "#172033", 0.16));
-          context.fillStyle = gradient;
-          context.fill(shape);
-        }
-        context.strokeStyle = "#20201d";
-        context.stroke(shape);
-      });
+      context.beginPath();
+      context.rect(0, 0, canvas.width, canvas.height * progress);
+      context.clip();
+      context.drawImage(source, 0, 0);
       context.restore();
       setReplayProgress(progress);
       if (progress < 1) replayFrameRef.current = requestAnimationFrame(drawFrame);
       else {
+        context.putImageData(original, 0, 0);
         replayFrameRef.current = null;
         replayBackupRef.current = null;
         setIsReplaying(false);
-        commitSnapshot();
+
         announce("Replay finished — ready to record");
       }
     };
     replayFrameRef.current = requestAnimationFrame(drawFrame);
-  }, [activeTemplate, announce, commitSnapshot, isReplaying, resetHistory]);
+  }, [announce, isReplaying]);
 
   useEffect(() => () => stopReplay(false), [stopReplay]);
 
